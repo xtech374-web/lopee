@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Hand Tracking - Neon Cyberpunk</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; }
+        #video {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 180px; height: 135px;
+            border: 2px solid #00f3ff; border-radius: 10px;
+            z-index: 1; transform: scaleX(-1); opacity: 0.3;
+        }
+        .status {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            color: #00f3ff; font-family: 'Courier New', Courier, monospace;
+            z-index: 10; font-size: 18px; font-weight: bold; text-shadow: 0 0 10px #00f3ff;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="status" id="status">WAITING FOR CAMERA...</div>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const videoElement = document.getElementById("video");
+        const statusText = document.getElementById("status");
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        let particlesArray = [];
+        let handX = null;
+        let handY = null;
+
+        // --- 1. FUNGSI UNTUK MENGGAMBAR PARTIKEL NEON ---
+        function drawNeon(x, y, size, color) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            
+            // Efek Cahaya (Glow)
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = color;
+            ctx.fillStyle = color;
+            ctx.fill();
+            
+            // Inti Lampu (Putih agar terlihat menyala)
+            ctx.beginPath();
+            ctx.arc(x, y, size * 0.4, 0, Math.PI * 2);
+            ctx.fillStyle = "#fff";
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        // --- 2. LOGIKA PEMBENTUKAN TULISAN ---
+        function createTextPixels() {
+            ctx.fillStyle = "white";
+            const fontSize = Math.min(window.innerWidth * 0.15, 140);
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("JANGAN SENTUH AKU MAS", canvas.width / 2, canvas.height / 2);
+            
+            const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            return data;
+        }
+
+        // --- 3. CLASS PARTIKEL NEON ---
+        class Particle {
+            constructor(x, y) {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.destX = x;
+                this.destY = y;
+                
+                this.size = Math.random() * 3 + 2;
+                this.vx = 0;
+                this.vy = 0;
+                this.friction = 0.9;
+                this.springFactor = 0.15;
+
+                // Palet warna Neon
+                const colors = ['#00f3ff', '#ff00ff', '#00ff41', '#ffff00'];
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+            }
+
+            draw() {
+                drawNeon(this.x, this.y, this.size, this.color);
+            }
+
+            update() {
+                let dx = this.destX - this.x;
+                let dy = this.destY - this.y;
+                this.vx += dx * this.springFactor;
+                this.vy += dy * this.springFactor;
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Interaksi Tangan
+                if (handX != null && handY != null) {
+                    let hx = handX - this.x;
+                    let hy = handY - this.y;
+                    let dist = Math.sqrt(hx * hx + hy * hy);
+                    if (dist < 130) {
+                        let angle = Math.atan2(hy, hx);
+                        let force = (130 - dist) * 0.2; 
+                        this.vx -= Math.cos(angle) * force;
+                        this.vy -= Math.sin(angle) * force;
+                    }
+                }
+            }
+        }
+
+        function init() {
+            particlesArray = [];
+            const pixelData = createTextPixels();
+            const density = Math.min(window.innerWidth, window.innerHeight) > 1000 ? 12 : 10;
+
+            for (let y = 0; y < pixelData.height; y += density) {
+                for (let x = 0; x < pixelData.width; x += density) {
+                    const index = (y * 4 * pixelData.width) + (x * 4) + 3;
+                    if (pixelData.data[index] > 128) {
+                        particlesArray.push(new Particle(x, y));
+                    }
+                }
+            }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Efek Additive Blending (Penting untuk efek Neon)
+            ctx.globalCompositeOperation = 'lighter';
+            
+            for (let i = 0; i < particlesArray.length; i++) {
+                particlesArray[i].update();
+                particlesArray[i].draw();
+            }
+            
+            ctx.globalCompositeOperation = 'source-over';
+            requestAnimationFrame(animate);
+        }
+
+        // --- 4. SETUP AI HAND TRACKING ---
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                statusText.style.display = 'none';
+                const indexFinger = results.multiHandLandmarks[0][8]; // Ujung telunjuk
+                handX = (1 - indexFinger.x) * canvas.width;
+                handY = indexFinger.y * canvas.height;
+            } else {
+                handX = null;
+                handY = null;
+                statusText.style.display = 'block';
+                statusText.innerText = "MOVE YOUR HAND IN FRONT OF CAMERA";
+            }
+        });
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+
+        camera.start().then(() => {
+            statusText.innerText = "CAMERA ACTIVE. LOADING AI...";
+            init();
+            animate();
+        });
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            init();
+        });
+    </script>
+</body>
+</html>
